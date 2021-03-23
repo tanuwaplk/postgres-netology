@@ -1,7 +1,15 @@
+
+
 -- 1. В каких городах больше одного аэропорта?
 select city from airports
 group by city
 having count(airport_code)>1
+
+-- от преподавателя
+select city, count (airport_name) 
+from airports 
+group by city 
+having count (airport_name) > 1;
 
 /* airport_code - уникальный идентификатор аэропорта, поэтому его можно использовать, 
 чтобы посчитать кол-во аэропортов. having как раз позволяет фильтровать значения с помощью агрегирующих
@@ -12,6 +20,14 @@ select distinct arrival_airport from flights f
 join aircrafts o 
 on f.aircraft_code= o.aircraft_code 
 where range = (select max(range) from aircrafts)
+
+
+-- от преподавателя
+select distinct airport_name as "Аэропорты"
+from airports
+inner join flights on airports.airport_code = flights.arrival_airport
+inner join aircrafts on flights.aircraft_code = aircrafts.aircraft_code
+where aircrafts.range = (select max(range) from aircrafts);
 
 /* два подзапроса или join и подзапрос дают одинаковую производителность, 
 остановилась на втором варианте */
@@ -26,6 +42,12 @@ order by avg(actual_departure-scheduled_departure)::time desc limit 10
 /* получается немного производительнее, если сразу отсеять бесполезные строчки, в которых нет 
  информации о фактическом времени вылета */
 
+-- от преподавателя
+select flight_id, scheduled_departure, actual_departure, (actual_departure - scheduled_departure) as time
+from flights where actual_departure is not null
+order by time desc
+limit 10;
+
 -- 4. Были ли брони, по которым не были получены посадочные талоны?
 
 select t.book_ref from tickets t 
@@ -39,6 +61,14 @@ where boarding_no is null and status!= 'Scheduled'
 посадочный не полулось смапить по рейсу в конкретном билете.
 условие status!= 'Scheduled' ограничивыет выборку, отрезает те рейсы в бронировании, 
 на которые невозможно было еще зарегистрироваться */
+
+
+
+select count(bookings.book_ref)
+from bookings
+full outer join tickets on bookings.book_ref = tickets.book_ref
+full outer join boarding_passes on boarding_passes.ticket_no = tickets.ticket_no
+where boarding_passes.boarding_no is null;
 
 
 /* 5. Найдите свободные места для каждого рейса, их % отношение к общему количеству мест в самолете.
@@ -62,12 +92,40 @@ group by f.flight_id
 как разница между общей вместительностью самолета и кол-вом мест согласно посадочным. В подзапрос убрала подсчет кол-ва мест
 в самолете, чтобы не раздувать таблицу джойнами. От второго джойна не придумала как избавиться, чтобы работало окно*/
 
+select f.flight_id as "id рейса", 
+	f.aircraft_code as "Код самолета", 
+	f.departure_airport as "Код аэропорта", 
+	date(f.actual_departure) as "Дата вылета",
+	(s.count_seats - bp.count_bp) as "Свободные места",
+	round((cast(bp.count_bp as numeric) * 100 / s.count_seats), 2) as "% от общего количества мест",
+	sum(bp.count_bp) over (partition by date(f.actual_departure), f.departure_airport order by f.actual_departure) as "Накопительная",
+	bp.count_bp as "Количество вылетевших пассажиров"
+from flights f
+left join (
+	select bp.flight_id, count(bp.seat_no) as count_bp
+	from boarding_passes bp
+	group by bp.flight_id
+	order by bp.flight_id) as bp on bp.flight_id = f.flight_id 
+left join (
+	select s.aircraft_code, count(*) as count_seats
+	from seats s 
+	group by s.aircraft_code) as s on f.aircraft_code = s.aircraft_code
+where f.actual_departure is not null and bp.count_bp is not null
+order by date(f.actual_departure)
+
+
 
 -- 6. Найдите процентное соотношение перелетов по типам самолетов от общего количества.
 select distinct model, 
 ROUND((select count(flight_id) from flights f where f.aircraft_code = a.aircraft_code)*1.0 / (select count(*) from flights),4) * 100 as percantage_total
 from aircrafts a
 
+select aircrafts.model as "Модель самолета", aircrafts.aircraft_code, 
+round((count(flights.flight_id)::numeric)*100 / (select count(flights.flight_id) from flights)::numeric, 2) as "Доля перелетов"
+from aircrafts
+full outer join flights on aircrafts.aircraft_code = flights.aircraft_code
+group by aircrafts.aircraft_code
+order by "Доля перелетов" desc;
 
 -- 7. Были ли города, в которые можно добраться бизнес - классом дешевле, чем эконом-классом в рамках перелета?
 with economy as 
